@@ -27,6 +27,16 @@ class Post(BaseModel):
     reply_count = peewee.IntegerField(default=0)
 
 
+class PostMetadata(BaseModel):
+    uri = peewee.CharField(primary_key=True)
+    language = peewee.CharField(null=True, default=None)
+    topics = peewee.TextField(null=True, default=None)
+    safety = peewee.CharField(null=True, default=None)
+    embedding = peewee.TextField(null=True, default=None)
+    embedding_model = peewee.CharField(null=True, default=None)
+    classified_at = peewee.DateTimeField(default=datetime.utcnow)
+
+
 class Like(BaseModel):
     uri = peewee.CharField(primary_key=True)
     subject_uri = peewee.CharField(index=True)
@@ -84,6 +94,7 @@ if db.is_closed():
     db.connect()
     db.create_tables([
         Post,
+        PostMetadata,
         Like,
         Repost,
         Follow,

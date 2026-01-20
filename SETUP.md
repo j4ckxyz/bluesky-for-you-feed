@@ -219,20 +219,69 @@ to prevent back-to-back posts from the same account.
 
 ## Optional ML / LLM enhancements
 
-This implementation does not require an LLM. If you want richer relevance
-signals, common options include:
+LLM enrichment is optional. When enabled, the worker enriches a sampled subset
+of posts with topics, language, safety labels, and embeddings. The feed uses
+that metadata for topic affinity, safety penalties, and embedding similarity.
 
-- Embeddings for semantic retrieval:
-  - OpenAI: `text-embedding-3-large`
-  - Cohere: `embed-english-v3.0`
-  - Open source: `bge-large-en`, `e5-large-v2`
-- Lightweight content classification or topic filters:
-  - OpenAI: `gpt-4o-mini`
-  - Anthropic: `claude-3-haiku`
-  - Open source: `llama-3-8b-instruct`
+Recommended low-cost settings (about ~$1/week for modest traffic):
 
-If you add embeddings, you can store vectors in Postgres/pgvector or a vector
-DB and use them to power better out-of-network retrieval.
+```text
+LLM_ENABLED=true
+LLM_SAMPLE_RATE=0.02
+LLM_MIN_LIKES=5
+LLM_MIN_REPOSTS=2
+LLM_MIN_REPLIES=2
+LLM_MAX_CALLS_PER_MINUTE=10
+LLM_MAX_TEXT_CHARS=1200
+```
+
+### Provider options
+
+OpenRouter (OpenAI-compatible):
+
+```text
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=openai/gpt-4o-mini
+OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
+```
+
+Custom OpenAI-compatible endpoint:
+
+```text
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+LLM_BASE_URL=https://your-proxy.example.com/v1
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+Gemini:
+
+```text
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-1.5-flash
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+```
+
+Minimax:
+
+```text
+LLM_PROVIDER=minimax
+MINIMAX_API_KEY=...
+MINIMAX_GROUP_ID=...
+MINIMAX_MODEL=abab6.5s-chat
+MINIMAX_EMBEDDING_MODEL=embo-01
+```
+
+If your Minimax deployment uses custom endpoints, override:
+
+```text
+MINIMAX_BASE_URL=https://api.minimax.chat/v1
+MINIMAX_CHAT_PATH=/text/chatcompletion
+MINIMAX_EMBED_PATH=/text/embeddings
+```
 
 ## Troubleshooting
 

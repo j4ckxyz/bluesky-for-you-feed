@@ -9,6 +9,7 @@ from flask import Flask, jsonify, request
 
 from server.algos import algos
 from server.data_filter import operations_callback
+from server.llm_enricher import llm_enricher
 
 app = Flask(__name__)
 
@@ -23,6 +24,7 @@ stream_thread = threading.Thread(
     )
 )
 stream_thread.start()
+llm_enricher.start()
 
 
 def sigint_handler(*_):

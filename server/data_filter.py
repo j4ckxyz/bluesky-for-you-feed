@@ -9,12 +9,14 @@ from server.logger import logger
 from server.database import (
     db,
     Post,
+    PostMetadata,
     Like,
     Repost,
     Follow,
     Block,
     UserAction,
 )
+from server.llm_enricher import llm_enricher
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -154,6 +156,7 @@ def _handle_post_creates(created_posts: List[dict]) -> None:
 
         if reply_parent:
             _update_post_counter(reply_parent, Post.reply_count, 1)
+            llm_enricher.maybe_enqueue_by_uri(reply_parent, reason='engagement')
             _record_user_action(
                 created_post['uri'],
                 author,
@@ -176,6 +179,15 @@ def _handle_post_creates(created_posts: List[dict]) -> None:
         with db.atomic():
             Post.insert_many(posts_to_create).on_conflict_ignore().execute()
         logger.debug(f'Added posts: {len(posts_to_create)}')
+        for post in posts_to_create:
+            llm_enricher.maybe_enqueue_post(
+                uri=post['uri'],
+                text=post['text'],
+                like_count=post['like_count'],
+                repost_count=post['repost_count'],
+                reply_count=post['reply_count'],
+                reason='sample',
+            )
 
 
 def _handle_post_deletes(deleted_posts: List[dict]) -> None:
@@ -189,6 +201,7 @@ def _handle_post_deletes(deleted_posts: List[dict]) -> None:
             _update_post_counter(post.reply_parent, Post.reply_count, -1)
 
     Post.delete().where(Post.uri.in_(post_uris)).execute()
+    PostMetadata.delete().where(PostMetadata.uri.in_(post_uris)).execute()
     UserAction.delete().where(UserAction.record_uri.in_(post_uris)).execute()
     logger.debug(f'Deleted posts: {len(post_uris)}')
 
@@ -211,6 +224,7 @@ def _handle_like_creates(created_likes: List[dict]) -> None:
         })
 
         _update_post_counter(subject_uri, Post.like_count, 1)
+        llm_enricher.maybe_enqueue_by_uri(subject_uri, reason='engagement')
         _record_user_action(
             created_like['uri'],
             created_like['author'],
@@ -256,6 +270,7 @@ def _handle_repost_creates(created_reposts: List[dict]) -> None:
         })
 
         _update_post_counter(subject_uri, Post.repost_count, 1)
+        llm_enricher.maybe_enqueue_by_uri(subject_uri, reason='engagement')
         _record_user_action(
             created_repost['uri'],
             created_repost['author'],

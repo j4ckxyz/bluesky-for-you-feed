@@ -59,6 +59,13 @@ def _get_float_env_var(value: str, default: float) -> float:
         return default
 
 
+def _get_str_env_var(value: str, default: str) -> str:
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
+
+
 IGNORE_ARCHIVED_POSTS = _get_bool_env_var(os.environ.get('IGNORE_ARCHIVED_POSTS'))
 IGNORE_REPLY_POSTS = _get_bool_env_var(os.environ.get('IGNORE_REPLY_POSTS'))
 
@@ -93,3 +100,70 @@ WEIGHT_MEDIA = _get_float_env_var(os.environ.get('WEIGHT_MEDIA'), 0.4)
 WEIGHT_RECENCY = _get_float_env_var(os.environ.get('WEIGHT_RECENCY'), 2.0)
 WEIGHT_REPLY_PENALTY = _get_float_env_var(os.environ.get('WEIGHT_REPLY_PENALTY'), -0.5)
 AUTHOR_DIVERSITY_DECAY = _get_float_env_var(os.environ.get('AUTHOR_DIVERSITY_DECAY'), 0.6)
+
+LLM_ENABLED = _get_bool_env_var(os.environ.get('LLM_ENABLED'))
+LLM_PROVIDER = _get_str_env_var(os.environ.get('LLM_PROVIDER'), 'openrouter')
+LLM_API_KEY = os.environ.get('LLM_API_KEY')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+MINIMAX_API_KEY = os.environ.get('MINIMAX_API_KEY')
+
+LLM_BASE_URL = _get_str_env_var(os.environ.get('LLM_BASE_URL'), 'https://api.openai.com/v1')
+OPENROUTER_BASE_URL = _get_str_env_var(
+    os.environ.get('OPENROUTER_BASE_URL'),
+    'https://openrouter.ai/api/v1',
+)
+GEMINI_BASE_URL = _get_str_env_var(
+    os.environ.get('GEMINI_BASE_URL'),
+    'https://generativelanguage.googleapis.com/v1beta',
+)
+MINIMAX_BASE_URL = _get_str_env_var(
+    os.environ.get('MINIMAX_BASE_URL'),
+    'https://api.minimax.chat/v1',
+)
+MINIMAX_CHAT_PATH = _get_str_env_var(
+    os.environ.get('MINIMAX_CHAT_PATH'),
+    '/text/chatcompletion',
+)
+MINIMAX_EMBED_PATH = _get_str_env_var(
+    os.environ.get('MINIMAX_EMBED_PATH'),
+    '/text/embeddings',
+)
+MINIMAX_GROUP_ID = os.environ.get('MINIMAX_GROUP_ID')
+
+LLM_MODEL = _get_str_env_var(os.environ.get('LLM_MODEL'), 'gpt-4o-mini')
+LLM_EMBEDDING_MODEL = _get_str_env_var(
+    os.environ.get('LLM_EMBEDDING_MODEL'),
+    'text-embedding-3-small',
+)
+OPENAI_MODEL = os.environ.get('OPENAI_MODEL')
+OPENAI_EMBEDDING_MODEL = os.environ.get('OPENAI_EMBEDDING_MODEL')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL')
+OPENROUTER_EMBEDDING_MODEL = os.environ.get('OPENROUTER_EMBEDDING_MODEL')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL')
+GEMINI_EMBEDDING_MODEL = os.environ.get('GEMINI_EMBEDDING_MODEL')
+MINIMAX_MODEL = os.environ.get('MINIMAX_MODEL')
+MINIMAX_EMBEDDING_MODEL = os.environ.get('MINIMAX_EMBEDDING_MODEL')
+
+LLM_SAMPLE_RATE = _get_float_env_var(os.environ.get('LLM_SAMPLE_RATE'), 0.02)
+LLM_MIN_LIKES = _get_int_env_var(os.environ.get('LLM_MIN_LIKES'), 5)
+LLM_MIN_REPOSTS = _get_int_env_var(os.environ.get('LLM_MIN_REPOSTS'), 2)
+LLM_MIN_REPLIES = _get_int_env_var(os.environ.get('LLM_MIN_REPLIES'), 2)
+LLM_MAX_CALLS_PER_MINUTE = _get_int_env_var(os.environ.get('LLM_MAX_CALLS_PER_MINUTE'), 10)
+LLM_MAX_QUEUE = _get_int_env_var(os.environ.get('LLM_MAX_QUEUE'), 500)
+LLM_MAX_TEXT_CHARS = _get_int_env_var(os.environ.get('LLM_MAX_TEXT_CHARS'), 1200)
+
+LLM_TOPIC_BOOST = _get_float_env_var(os.environ.get('LLM_TOPIC_BOOST'), 0.6)
+LLM_EMBEDDING_BOOST = _get_float_env_var(os.environ.get('LLM_EMBEDDING_BOOST'), 0.8)
+LLM_SAFETY_PENALTY = _get_float_env_var(os.environ.get('LLM_SAFETY_PENALTY'), -1.2)
+LLM_SAFETY_BLOCKLIST = {
+    label.strip()
+    for label in (os.environ.get('LLM_SAFETY_BLOCKLIST') or 'graphic').split(',')
+    if label.strip()
+}
+LLM_SAFETY_PENALTY_LABELS = {
+    label.strip()
+    for label in (os.environ.get('LLM_SAFETY_PENALTY_LABELS') or 'nsfw,suggestive').split(',')
+    if label.strip()
+}

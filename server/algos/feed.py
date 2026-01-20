@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from math import exp, log1p
-from typing import Dict, List, Optional, Set
+import json
+from math import exp, log1p, sqrt
+from typing import Dict, List, Optional, Set, Tuple
 
 from peewee import fn
 
 from server import config
 from server.database import (
     Post,
+    PostMetadata,
     Like,
     Repost,
     Follow,
@@ -43,6 +45,13 @@ class Candidate:
     in_network: bool
     social_proof: int
     author_affinity: float
+    topics: List[str]
+    language: Optional[str]
+    safety: Optional[str]
+    embedding: Optional[List[float]]
+    topic_boost: float = 0.0
+    embedding_boost: float = 0.0
+    safety_penalty: float = 0.0
     score: float = 0.0
 
 
@@ -67,11 +76,19 @@ def handler(cursor: Optional[str], limit: int, viewer_did: str) -> dict:
     if not candidates:
         return {'cursor': CURSOR_EOF, 'feed': []}
 
+    metadata_by_uri = _load_post_metadata(candidates) if config.LLM_ENABLED else {}
+    topic_profile, user_embedding = (
+        _load_user_llm_profile(viewer_did, now) if config.LLM_ENABLED else ({}, None)
+    )
+
     scored = _score_candidates(
         candidates,
         following,
         author_affinity,
         social_proof,
+        metadata_by_uri,
+        topic_profile,
+        user_embedding,
         now,
     )
     scored = _apply_author_diversity(scored)
@@ -167,6 +184,78 @@ def _load_social_proof(following: Set[str], now: datetime) -> Dict[str, int]:
         counts[row.subject_uri] = counts.get(row.subject_uri, 0) + int(row.count) * 2
 
     return counts
+
+
+def _load_post_metadata(candidates: List[Post]) -> Dict[str, PostMetadata]:
+    if not candidates:
+        return {}
+    uris = [post.uri for post in candidates]
+    rows = PostMetadata.select().where(PostMetadata.uri.in_(uris))
+    return {row.uri: row for row in rows}
+
+
+def _load_user_llm_profile(
+    viewer_did: str,
+    now: datetime,
+) -> Tuple[Dict[str, float], Optional[List[float]]]:
+    cutoff = now - timedelta(hours=config.USER_ACTION_LOOKBACK_HOURS)
+    actions = (
+        UserAction.select(UserAction.action, UserAction.subject_uri)
+        .where(
+            (UserAction.user == viewer_did)
+            & (UserAction.created_at >= cutoff)
+            & UserAction.subject_uri.is_null(False)
+        )
+        .order_by(UserAction.created_at.desc())
+        .limit(config.USER_ACTION_HISTORY_LIMIT)
+    )
+
+    weighted_uris: List[Tuple[str, float]] = []
+    for action in actions:
+        weight = _ACTION_WEIGHTS.get(action.action, 0.0)
+        if weight <= 0:
+            continue
+        if action.subject_uri:
+            weighted_uris.append((action.subject_uri, weight))
+
+    if not weighted_uris:
+        return {}, None
+
+    unique_uris = {uri for uri, _ in weighted_uris}
+    metadata_rows = (
+        PostMetadata.select()
+        .where(PostMetadata.uri.in_(unique_uris))
+    )
+    metadata_map = {row.uri: row for row in metadata_rows}
+
+    topic_profile: Dict[str, float] = {}
+    embedding_sum: Optional[List[float]] = None
+    total_weight = 0.0
+
+    for uri, weight in weighted_uris:
+        metadata = metadata_map.get(uri)
+        if not metadata:
+            continue
+
+        topics = _parse_topics(metadata.topics)
+        for topic in topics:
+            topic_profile[topic] = topic_profile.get(topic, 0.0) + weight
+
+        embedding = _parse_embedding(metadata.embedding)
+        if embedding:
+            if embedding_sum is None:
+                embedding_sum = [0.0 for _ in embedding]
+            if len(embedding_sum) != len(embedding):
+                continue
+            for idx, value in enumerate(embedding):
+                embedding_sum[idx] += value * weight
+            total_weight += weight
+
+    user_embedding = None
+    if embedding_sum and total_weight > 0:
+        user_embedding = [value / total_weight for value in embedding_sum]
+
+    return topic_profile, user_embedding
 
 
 def _load_candidates(following: Set[str], now: datetime) -> List[Post]:
@@ -277,16 +366,93 @@ def _filter_candidates(
     ]
 
 
+def _parse_topics(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item).strip().lower() for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        return []
+    return []
+
+
+def _parse_embedding(value: Optional[str]) -> Optional[List[float]]:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [float(item) for item in parsed]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+    return None
+
+
+def _topic_boost(topics: List[str], profile: Dict[str, float]) -> float:
+    if not topics or not profile:
+        return 0.0
+    score = sum(profile.get(topic, 0.0) for topic in topics)
+    if score <= 0:
+        return 0.0
+    return log1p(score) * config.LLM_TOPIC_BOOST
+
+
+def _embedding_boost(embedding: Optional[List[float]], user_embedding: Optional[List[float]]) -> float:
+    if not embedding or not user_embedding:
+        return 0.0
+    if len(embedding) != len(user_embedding):
+        return 0.0
+    similarity = _cosine_similarity(embedding, user_embedding)
+    if similarity <= 0:
+        return 0.0
+    return similarity * config.LLM_EMBEDDING_BOOST
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sqrt(sum(x * x for x in a))
+    norm_b = sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _safety_penalty(safety: Optional[str]) -> float:
+    if not safety:
+        return 0.0
+    label = safety.strip().lower()
+    if label in config.LLM_SAFETY_PENALTY_LABELS:
+        return config.LLM_SAFETY_PENALTY
+    return 0.0
+
+
 def _score_candidates(
     candidates: List[Post],
     following: Set[str],
     author_affinity: Dict[str, float],
     social_proof: Dict[str, int],
+    metadata_by_uri: Dict[str, PostMetadata],
+    topic_profile: Dict[str, float],
+    user_embedding: Optional[List[float]],
     now: datetime,
 ) -> List[Candidate]:
     scored: List[Candidate] = []
 
     for post in candidates:
+        metadata = metadata_by_uri.get(post.uri)
+        topics = _parse_topics(metadata.topics) if metadata else []
+        language = metadata.language if metadata else None
+        safety = metadata.safety if metadata else None
+        embedding = _parse_embedding(metadata.embedding) if metadata else None
+
+        if safety and safety.lower() in config.LLM_SAFETY_BLOCKLIST:
+            continue
+
+        topic_boost = _topic_boost(topics, topic_profile)
+        embedding_boost = _embedding_boost(embedding, user_embedding)
+        safety_penalty = _safety_penalty(safety)
         candidate = Candidate(
             uri=post.uri,
             cid=post.cid,
@@ -302,6 +468,13 @@ def _score_candidates(
             in_network=post.author in following,
             social_proof=social_proof.get(post.uri, 0),
             author_affinity=author_affinity.get(post.author, 0.0),
+            topics=topics,
+            language=language,
+            safety=safety,
+            embedding=embedding,
+            topic_boost=topic_boost,
+            embedding_boost=embedding_boost,
+            safety_penalty=safety_penalty,
         )
         candidate.score = _score_candidate(candidate, now)
         scored.append(candidate)
@@ -334,6 +507,9 @@ def _score_candidate(candidate: Candidate, now: datetime) -> float:
         + media
         + (recency * config.WEIGHT_RECENCY)
         + reply_penalty
+        + candidate.topic_boost
+        + candidate.embedding_boost
+        + candidate.safety_penalty
     )
 
 

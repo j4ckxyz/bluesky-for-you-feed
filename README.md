@@ -12,6 +12,7 @@ with engagement + recency + social proof, and serves a personalized feed.
 - Weighted ranking with recency, engagement, author affinity, and diversity
 - Authenticated feed requests with an allowlist for safe rollout
 - SQLite storage (easy to swap for Postgres)
+- Optional LLM enrichment (topics, safety, embeddings)
 
 ## Quick start
 
