@@ -170,6 +170,34 @@ impactful settings:
 - `AUTHOR_DIVERSITY_DECAY`
 - `IN_NETWORK_CANDIDATE_LIMIT`, `OON_CANDIDATE_LIMIT`
 
+## Follow + like caching
+
+The feed refreshes each viewer's follows/blocks and recent likes on-demand and
+caches them to avoid per-request graph lookups. Defaults are daily for follows
+and blocks, and every 6 hours for likes.
+
+```text
+GRAPH_FOLLOWS_REFRESH_HOURS=24
+GRAPH_BLOCKS_REFRESH_HOURS=24
+GRAPH_LIKES_REFRESH_HOURS=6
+GRAPH_MAX_FOLLOWS=20000
+GRAPH_MAX_LIKES=500
+```
+
+## Show more / less
+
+Bluesky can send interaction events (`requestMore` / `requestLess`) when
+users tap the feed controls. The server stores topic preferences per user and
+applies them to ranking via `TOPIC_PREF_*` settings.
+
+```text
+TOPIC_PREF_MORE_DELTA=1.0
+TOPIC_PREF_LESS_DELTA=-1.0
+TOPIC_PREF_MIN=-4.0
+TOPIC_PREF_MAX=4.0
+TOPIC_PREF_BOOST=1.0
+```
+
 ## Algorithm deep dive
 
 ### Candidate sources

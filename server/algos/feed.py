@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from math import exp, log1p, sqrt
 from typing import Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
 from peewee import fn
 
@@ -17,6 +18,7 @@ from server.database import (
     UserAction,
     ServedPost,
 )
+from server.user_context import ViewerContext
 
 uri = config.FEED_URI
 CURSOR_EOF = 'eof'
@@ -55,12 +57,18 @@ class Candidate:
     score: float = 0.0
 
 
-def handler(cursor: Optional[str], limit: int, viewer_did: str) -> dict:
+def handler(
+    cursor: Optional[str],
+    limit: int,
+    viewer_did: str,
+    viewer_context: Optional[ViewerContext] = None,
+) -> dict:
     limit = max(1, min(limit, 100))
     now = datetime.utcnow()
 
-    following = _load_following(viewer_did)
-    blocked = _load_blocked(viewer_did)
+    following = viewer_context.following if viewer_context else _load_following(viewer_did)
+    blocked = viewer_context.blocked if viewer_context else _load_blocked(viewer_did)
+    topic_preferences = viewer_context.topic_preferences if viewer_context else {}
     seen_posts = _load_recently_served(viewer_did, now)
     author_affinity = _load_author_affinity(viewer_did, now)
     social_proof = _load_social_proof(following, now)
@@ -78,7 +86,9 @@ def handler(cursor: Optional[str], limit: int, viewer_did: str) -> dict:
 
     metadata_by_uri = _load_post_metadata(candidates) if config.LLM_ENABLED else {}
     topic_profile, user_embedding = (
-        _load_user_llm_profile(viewer_did, now) if config.LLM_ENABLED else ({}, None)
+        _load_user_llm_profile(viewer_did, now, topic_preferences)
+        if config.LLM_ENABLED
+        else ({}, None)
     )
 
     scored = _score_candidates(
@@ -100,10 +110,17 @@ def handler(cursor: Optional[str], limit: int, viewer_did: str) -> dict:
     _record_served(viewer_did, selected, now)
 
     cursor = _build_cursor(selected[-1])
-    feed = [{'post': candidate.uri} for candidate in selected]
+    req_id = uuid4().hex
+    feed = []
+    for candidate in selected:
+        item = {'post': candidate.uri}
+        if candidate.topics:
+            item['feedContext'] = json.dumps({'topics': candidate.topics})
+        feed.append(item)
     return {
         'cursor': cursor,
         'feed': feed,
+        'reqId': req_id,
     }
 
 
@@ -197,6 +214,7 @@ def _load_post_metadata(candidates: List[Post]) -> Dict[str, PostMetadata]:
 def _load_user_llm_profile(
     viewer_did: str,
     now: datetime,
+    topic_preferences: Dict[str, float],
 ) -> Tuple[Dict[str, float], Optional[List[float]]]:
     cutoff = now - timedelta(hours=config.USER_ACTION_LOOKBACK_HOURS)
     actions = (
@@ -254,6 +272,10 @@ def _load_user_llm_profile(
     user_embedding = None
     if embedding_sum and total_weight > 0:
         user_embedding = [value / total_weight for value in embedding_sum]
+
+    if topic_preferences:
+        for topic, weight in topic_preferences.items():
+            topic_profile[topic] = topic_profile.get(topic, 0.0) + (weight * config.TOPIC_PREF_BOOST)
 
     return topic_profile, user_embedding
 
@@ -394,9 +416,11 @@ def _topic_boost(topics: List[str], profile: Dict[str, float]) -> float:
     if not topics or not profile:
         return 0.0
     score = sum(profile.get(topic, 0.0) for topic in topics)
-    if score <= 0:
+    if score == 0:
         return 0.0
-    return log1p(score) * config.LLM_TOPIC_BOOST
+    if score > 0:
+        return log1p(score) * config.LLM_TOPIC_BOOST
+    return -log1p(abs(score)) * config.LLM_TOPIC_BOOST
 
 
 def _embedding_boost(embedding: Optional[List[float]], user_embedding: Optional[List[float]]) -> float:

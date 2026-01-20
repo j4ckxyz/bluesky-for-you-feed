@@ -13,6 +13,7 @@ with engagement + recency + social proof, and serves a personalized feed.
 - Authenticated feed requests with an allowlist for safe rollout
 - SQLite storage (easy to swap for Postgres)
 - Optional LLM enrichment (topics, safety, embeddings)
+- Cached follows/likes with per-user show more/less preferences
 
 ## Quick start
 

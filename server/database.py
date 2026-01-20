@@ -76,6 +76,25 @@ class UserAction(BaseModel):
     created_at = peewee.DateTimeField(index=True)
 
 
+class UserGraphState(BaseModel):
+    viewer = peewee.CharField(primary_key=True)
+    follows_refreshed_at = peewee.DateTimeField(null=True, default=None)
+    blocks_refreshed_at = peewee.DateTimeField(null=True, default=None)
+    likes_refreshed_at = peewee.DateTimeField(null=True, default=None)
+    pds_url = peewee.CharField(null=True, default=None)
+    pds_refreshed_at = peewee.DateTimeField(null=True, default=None)
+
+
+class UserTopicPreference(BaseModel):
+    viewer = peewee.CharField(index=True)
+    topic = peewee.CharField(index=True)
+    weight = peewee.FloatField(default=0.0)
+    updated_at = peewee.DateTimeField(default=datetime.utcnow, index=True)
+
+    class Meta:
+        indexes = ((('viewer', 'topic'), True),)
+
+
 class ServedPost(BaseModel):
     viewer = peewee.CharField(index=True)
     post_uri = peewee.CharField(index=True)
@@ -100,6 +119,8 @@ if db.is_closed():
         Follow,
         Block,
         UserAction,
+        UserGraphState,
+        UserTopicPreference,
         ServedPost,
         SubscriptionState,
     ], safe=True)

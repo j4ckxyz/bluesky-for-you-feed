@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 from server.algos import algos
 from server.data_filter import operations_callback
 from server.llm_enricher import llm_enricher
+from server.user_context import apply_interactions, get_viewer_context
 
 app = Flask(__name__)
 
@@ -79,9 +80,10 @@ def get_feed_skeleton():
     if not algo:
         return 'Unsupported algorithm', 400
 
-    from server.auth import AuthorizationError, validate_auth
+    from server.auth import AuthorizationError, get_auth_token, validate_auth
     try:
         requester_did = validate_auth(request)
+        auth_token = get_auth_token(request)
     except AuthorizationError:
         return 'Unauthorized', 401
 
@@ -91,8 +93,27 @@ def get_feed_skeleton():
     try:
         cursor = request.args.get('cursor', default=None, type=str)
         limit = request.args.get('limit', default=20, type=int)
-        body = algo(cursor, limit, requester_did)
+        viewer_context = get_viewer_context(requester_did, auth_token)
+        body = algo(cursor, limit, requester_did, viewer_context)
     except ValueError:
         return 'Malformed cursor', 400
 
     return jsonify(body)
+
+
+@app.route('/xrpc/app.bsky.feed.sendInteractions', methods=['POST'])
+def send_interactions():
+    from server.auth import AuthorizationError, get_auth_token, validate_auth
+    try:
+        requester_did = validate_auth(request)
+        _ = get_auth_token(request)
+    except AuthorizationError:
+        return 'Unauthorized', 401
+
+    payload = request.get_json(silent=True) or {}
+    interactions = payload.get('interactions') or []
+    if not isinstance(interactions, list):
+        return 'Invalid interactions payload', 400
+
+    apply_interactions(requester_did, interactions)
+    return jsonify({})

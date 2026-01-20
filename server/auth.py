@@ -39,3 +39,14 @@ def validate_auth(request: 'Request') -> str:
         return verify_jwt(jwt, _ID_RESOLVER.did.resolve_atproto_key).iss
     except TokenInvalidSignatureError as e:
         raise AuthorizationError('Invalid signature') from e
+
+
+def get_auth_token(request: 'Request') -> str:
+    auth_header = request.headers.get(_AUTHORIZATION_HEADER_NAME)
+    if not auth_header:
+        raise AuthorizationError('Authorization header is missing')
+
+    if not auth_header.startswith(_AUTHORIZATION_HEADER_VALUE_PREFIX):
+        raise AuthorizationError('Invalid authorization header')
+
+    return auth_header[len(_AUTHORIZATION_HEADER_VALUE_PREFIX) :].strip()

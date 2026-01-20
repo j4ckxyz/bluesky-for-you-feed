@@ -176,3 +176,29 @@ LLM_SAFETY_PENALTY_LABELS = {
     for label in (os.environ.get('LLM_SAFETY_PENALTY_LABELS') or 'nsfw,suggestive').split(',')
     if label.strip()
 }
+
+GRAPH_FOLLOWS_REFRESH_HOURS = _get_int_env_var(
+    os.environ.get('GRAPH_FOLLOWS_REFRESH_HOURS'),
+    24,
+)
+GRAPH_BLOCKS_REFRESH_HOURS = _get_int_env_var(
+    os.environ.get('GRAPH_BLOCKS_REFRESH_HOURS'),
+    24,
+)
+GRAPH_LIKES_REFRESH_HOURS = _get_int_env_var(
+    os.environ.get('GRAPH_LIKES_REFRESH_HOURS'),
+    6,
+)
+PDS_CACHE_REFRESH_HOURS = _get_int_env_var(
+    os.environ.get('PDS_CACHE_REFRESH_HOURS'),
+    24,
+)
+GRAPH_MAX_FOLLOWS = _get_int_env_var(os.environ.get('GRAPH_MAX_FOLLOWS'), 20000)
+GRAPH_MAX_BLOCKS = _get_int_env_var(os.environ.get('GRAPH_MAX_BLOCKS'), 5000)
+GRAPH_MAX_LIKES = _get_int_env_var(os.environ.get('GRAPH_MAX_LIKES'), 500)
+
+TOPIC_PREF_MORE_DELTA = _get_float_env_var(os.environ.get('TOPIC_PREF_MORE_DELTA'), 1.0)
+TOPIC_PREF_LESS_DELTA = _get_float_env_var(os.environ.get('TOPIC_PREF_LESS_DELTA'), -1.0)
+TOPIC_PREF_MIN = _get_float_env_var(os.environ.get('TOPIC_PREF_MIN'), -4.0)
+TOPIC_PREF_MAX = _get_float_env_var(os.environ.get('TOPIC_PREF_MAX'), 4.0)
+TOPIC_PREF_BOOST = _get_float_env_var(os.environ.get('TOPIC_PREF_BOOST'), 1.0)
