@@ -66,6 +66,12 @@ def _get_str_env_var(value: str, default: str) -> str:
     return value if value else default
 
 
+APPVIEW_BASE_URL = _get_str_env_var(
+    os.environ.get('APPVIEW_BASE_URL'),
+    'https://api.bsky.app',
+).rstrip('/')
+
+
 IGNORE_ARCHIVED_POSTS = _get_bool_env_var(os.environ.get('IGNORE_ARCHIVED_POSTS'))
 IGNORE_REPLY_POSTS = _get_bool_env_var(os.environ.get('IGNORE_REPLY_POSTS'))
 

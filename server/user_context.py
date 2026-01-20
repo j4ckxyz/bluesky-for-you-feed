@@ -32,11 +32,11 @@ class ViewerContext:
 
 
 def get_viewer_context(viewer_did: str, auth_token: Optional[str]) -> ViewerContext:
-    pds_url = _resolve_pds_endpoint(viewer_did)
-    if pds_url and auth_token:
-        _refresh_follows(viewer_did, auth_token, pds_url)
-        _refresh_blocks(viewer_did, auth_token, pds_url)
-        _refresh_likes(viewer_did, auth_token, pds_url)
+    graph_url = _resolve_graph_endpoint(viewer_did)
+    if graph_url and auth_token:
+        _refresh_follows(viewer_did, auth_token, graph_url)
+        _refresh_blocks(viewer_did, auth_token, graph_url)
+        _refresh_likes(viewer_did, auth_token, graph_url)
 
     following = {
         row.subject
@@ -137,13 +137,13 @@ def _topics_from_feed_context(feed_context: Optional[str]) -> List[str]:
     return []
 
 
-def _refresh_follows(viewer_did: str, auth_token: str, pds_url: str) -> None:
+def _refresh_follows(viewer_did: str, auth_token: str, graph_url: str) -> None:
     state = _get_state(viewer_did)
     if not _needs_refresh(state.follows_refreshed_at, config.GRAPH_FOLLOWS_REFRESH_HOURS):
         return
 
     follows = _fetch_paged(
-        pds_url,
+        graph_url,
         'app.bsky.graph.getFollows',
         auth_token,
         'follows',
@@ -174,13 +174,13 @@ def _refresh_follows(viewer_did: str, auth_token: str, pds_url: str) -> None:
     state.save()
 
 
-def _refresh_blocks(viewer_did: str, auth_token: str, pds_url: str) -> None:
+def _refresh_blocks(viewer_did: str, auth_token: str, graph_url: str) -> None:
     state = _get_state(viewer_did)
     if not _needs_refresh(state.blocks_refreshed_at, config.GRAPH_BLOCKS_REFRESH_HOURS):
         return
 
     blocks = _fetch_paged(
-        pds_url,
+        graph_url,
         'app.bsky.graph.getBlocks',
         auth_token,
         'blocks',
@@ -211,13 +211,13 @@ def _refresh_blocks(viewer_did: str, auth_token: str, pds_url: str) -> None:
     state.save()
 
 
-def _refresh_likes(viewer_did: str, auth_token: str, pds_url: str) -> None:
+def _refresh_likes(viewer_did: str, auth_token: str, graph_url: str) -> None:
     state = _get_state(viewer_did)
     if not _needs_refresh(state.likes_refreshed_at, config.GRAPH_LIKES_REFRESH_HOURS):
         return
 
     likes = _fetch_paged(
-        pds_url,
+        graph_url,
         'app.bsky.feed.getActorLikes',
         auth_token,
         'feed',
@@ -271,7 +271,7 @@ def _refresh_likes(viewer_did: str, auth_token: str, pds_url: str) -> None:
 
 
 def _fetch_paged(
-    pds_url: str,
+    base_url: str,
     nsid: str,
     auth_token: str,
     list_key: str,
@@ -287,12 +287,12 @@ def _fetch_paged(
             params = {'actor': actor, 'limit': 100}
             if cursor:
                 params['cursor'] = cursor
-            url = f'{pds_url}/xrpc/{nsid}'
+            url = f'{base_url}/xrpc/{nsid}'
             try:
                 response = client.get(url, params=params, headers=headers)
                 response.raise_for_status()
             except httpx.HTTPError as exc:
-                logger.warning(f'PDS fetch failed for {nsid}: {exc}')
+                logger.warning(f'Graph fetch failed for {nsid}: {exc}')
                 return None
 
             data = response.json()
@@ -308,6 +308,12 @@ def _fetch_paged(
                 break
 
     return items
+
+
+def _resolve_graph_endpoint(viewer_did: str) -> Optional[str]:
+    if config.APPVIEW_BASE_URL:
+        return config.APPVIEW_BASE_URL
+    return _resolve_pds_endpoint(viewer_did)
 
 
 def _resolve_pds_endpoint(viewer_did: str) -> Optional[str]:
