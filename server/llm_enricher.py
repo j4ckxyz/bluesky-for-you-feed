@@ -227,17 +227,18 @@ class LLMEnricher:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._client = self._build_client()
+        self._classify_client = self._build_client(config.LLM_CLASSIFY_PROVIDER, role='classify')
+        self._embed_client = self._build_client(config.LLM_EMBED_PROVIDER, role='embed')
         self._embedding_model = ''
-        if self._client:
-            self._embedding_model = getattr(self._client, 'embedding_model', '')
+        if self._embed_client:
+            self._embedding_model = getattr(self._embed_client, 'embedding_model', '')
         self._min_interval = 0.0
         if config.LLM_MAX_CALLS_PER_MINUTE > 0:
             self._min_interval = 60.0 / config.LLM_MAX_CALLS_PER_MINUTE
         self._last_call = 0.0
 
     def start(self) -> None:
-        if not self._client or self._thread:
+        if not (self._classify_client or self._embed_client) or self._thread:
             return
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -254,7 +255,7 @@ class LLMEnricher:
         reply_count: int = 0,
         reason: str = 'sample',
     ) -> None:
-        if not self._client or not config.LLM_ENABLED:
+        if not (self._classify_client or self._embed_client) or not config.LLM_ENABLED:
             return
 
         if not uri or not text:
@@ -283,7 +284,7 @@ class LLMEnricher:
             logger.warning('LLM queue full; dropping job')
 
     def maybe_enqueue_by_uri(self, uri: str, reason: str = 'engagement') -> None:
-        if not self._client or not config.LLM_ENABLED:
+        if not (self._classify_client or self._embed_client) or not config.LLM_ENABLED:
             return
         post = Post.get_or_none(Post.uri == uri)
         if not post:
@@ -327,11 +328,11 @@ class LLMEnricher:
                 self._queue.task_done()
 
     def _process_job(self, job: LLMJob) -> None:
-        if not self._client:
+        if not (self._classify_client or self._embed_client):
             return
 
-        classification = self._classify(job.text)
-        embedding = self._embed(job.text)
+        classification = self._classify(job.text) if self._classify_client else None
+        embedding = self._embed(job.text) if self._embed_client else None
 
         if not classification and not embedding:
             return
@@ -371,13 +372,17 @@ class LLMEnricher:
 
     def _classify(self, text: str) -> Optional[Dict[str, object]]:
         self._rate_limit()
-        return self._client.classify(text)
+        if not self._classify_client:
+            return None
+        return self._classify_client.classify(text)
 
     def _embed(self, text: str) -> Optional[List[float]]:
         if not self._embedding_model:
             return None
         self._rate_limit()
-        return self._client.embed(text)
+        if not self._embed_client:
+            return None
+        return self._embed_client.embed(text)
 
     def _rate_limit(self) -> None:
         if self._min_interval <= 0:
@@ -387,11 +392,22 @@ class LLMEnricher:
             time.sleep(self._min_interval - elapsed)
         self._last_call = time.time()
 
-    def _build_client(self) -> Optional[BaseLLMClient]:
+    def _build_client(self, provider: str, role: str) -> Optional[BaseLLMClient]:
         if not config.LLM_ENABLED:
             return None
 
-        provider = config.LLM_PROVIDER.lower()
+        provider = provider.lower()
+        if role not in {'classify', 'embed'}:
+            logger.warning(f'Unknown LLM role: {role}')
+            return None
+
+        model = _normalize_model_name(config.LLM_CLASSIFY_MODEL or config.LLM_MODEL)
+        embedding_model = _normalize_model_name(config.LLM_EMBEDDING_MODEL)
+        if role == 'classify':
+            embedding_model = ''
+        if role == 'embed':
+            model = ''
+
         if provider == 'openai':
             key = config.OPENAI_API_KEY or config.LLM_API_KEY
             if not key:
@@ -400,10 +416,8 @@ class LLMEnricher:
             return OpenAICompatibleClient(
                 config.LLM_BASE_URL,
                 key,
-                _normalize_model_name(config.OPENAI_MODEL or config.LLM_MODEL),
-                _normalize_model_name(
-                    config.OPENAI_EMBEDDING_MODEL or config.LLM_EMBEDDING_MODEL
-                ),
+                _normalize_model_name(config.OPENAI_MODEL or model),
+                _normalize_model_name(config.OPENAI_EMBEDDING_MODEL or embedding_model),
             )
 
         if provider == 'openrouter':
@@ -414,10 +428,8 @@ class LLMEnricher:
             return OpenAICompatibleClient(
                 config.OPENROUTER_BASE_URL,
                 key,
-                _normalize_model_name(config.OPENROUTER_MODEL or config.LLM_MODEL),
-                _normalize_model_name(
-                    config.OPENROUTER_EMBEDDING_MODEL or config.LLM_EMBEDDING_MODEL
-                ),
+                _normalize_model_name(config.OPENROUTER_MODEL or model),
+                _normalize_model_name(config.OPENROUTER_EMBEDDING_MODEL or embedding_model),
             )
 
         if provider == 'gemini':
@@ -428,10 +440,8 @@ class LLMEnricher:
             return GeminiClient(
                 config.GEMINI_BASE_URL,
                 key,
-                _normalize_model_name(config.GEMINI_MODEL or config.LLM_MODEL),
-                _normalize_model_name(
-                    config.GEMINI_EMBEDDING_MODEL or config.LLM_EMBEDDING_MODEL
-                ),
+                _normalize_model_name(config.GEMINI_MODEL or model),
+                _normalize_model_name(config.GEMINI_EMBEDDING_MODEL or embedding_model),
             )
 
         if provider == 'minimax':
@@ -445,10 +455,8 @@ class LLMEnricher:
                 config.MINIMAX_GROUP_ID,
                 config.MINIMAX_CHAT_PATH,
                 config.MINIMAX_EMBED_PATH,
-                _normalize_model_name(config.MINIMAX_MODEL or config.LLM_MODEL),
-                _normalize_model_name(
-                    config.MINIMAX_EMBEDDING_MODEL or config.LLM_EMBEDDING_MODEL
-                ),
+                _normalize_model_name(config.MINIMAX_MODEL or model),
+                _normalize_model_name(config.MINIMAX_EMBEDDING_MODEL or embedding_model),
             )
 
         logger.warning(f'Unknown LLM provider: {provider}')

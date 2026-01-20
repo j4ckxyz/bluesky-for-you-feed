@@ -246,6 +246,20 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 ```
 
+Split providers (Gemini classify, OpenRouter embeddings):
+
+```text
+LLM_ENABLED=true
+LLM_CLASSIFY_PROVIDER=gemini
+LLM_EMBED_PROVIDER=openrouter
+
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-1.5-flash
+
+OPENROUTER_API_KEY=...
+OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
+```
+
 Custom OpenAI-compatible endpoint:
 
 ```text

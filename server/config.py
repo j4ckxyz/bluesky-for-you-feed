@@ -103,6 +103,14 @@ AUTHOR_DIVERSITY_DECAY = _get_float_env_var(os.environ.get('AUTHOR_DIVERSITY_DEC
 
 LLM_ENABLED = _get_bool_env_var(os.environ.get('LLM_ENABLED'))
 LLM_PROVIDER = _get_str_env_var(os.environ.get('LLM_PROVIDER'), 'openrouter')
+LLM_CLASSIFY_PROVIDER = _get_str_env_var(
+    os.environ.get('LLM_CLASSIFY_PROVIDER'),
+    LLM_PROVIDER,
+)
+LLM_EMBED_PROVIDER = _get_str_env_var(
+    os.environ.get('LLM_EMBED_PROVIDER'),
+    LLM_PROVIDER,
+)
 LLM_API_KEY = os.environ.get('LLM_API_KEY')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
@@ -133,6 +141,7 @@ MINIMAX_EMBED_PATH = _get_str_env_var(
 MINIMAX_GROUP_ID = os.environ.get('MINIMAX_GROUP_ID')
 
 LLM_MODEL = _get_str_env_var(os.environ.get('LLM_MODEL'), 'gpt-4o-mini')
+LLM_CLASSIFY_MODEL = os.environ.get('LLM_CLASSIFY_MODEL')
 LLM_EMBEDDING_MODEL = _get_str_env_var(
     os.environ.get('LLM_EMBEDDING_MODEL'),
     'text-embedding-3-small',
