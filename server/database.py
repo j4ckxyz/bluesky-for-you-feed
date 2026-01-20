@@ -37,6 +37,13 @@ class PostMetadata(BaseModel):
     classified_at = peewee.DateTimeField(default=datetime.utcnow)
 
 
+class TopicEmbedding(BaseModel):
+    topic = peewee.CharField(primary_key=True)
+    embedding = peewee.TextField(null=True, default=None)
+    embedding_model = peewee.CharField(null=True, default=None)
+    updated_at = peewee.DateTimeField(default=datetime.utcnow, index=True)
+
+
 class Like(BaseModel):
     uri = peewee.CharField(primary_key=True)
     subject_uri = peewee.CharField(index=True)
@@ -114,6 +121,7 @@ if db.is_closed():
     db.create_tables([
         Post,
         PostMetadata,
+        TopicEmbedding,
         Like,
         Repost,
         Follow,

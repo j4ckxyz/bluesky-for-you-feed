@@ -10,7 +10,7 @@ import httpx
 
 from server import config
 from server.logger import logger
-from server.database import Post, PostMetadata
+from server.database import Post, PostMetadata, TopicEmbedding
 from datetime import datetime
 
 
@@ -470,15 +470,55 @@ class LLMEnricher:
         return None
 
     def _build_topic_vectors(self) -> Dict[str, List[float]]:
-        if not self._embed_client or not config.EMBED_TOPIC_SEEDS:
+        if not self._embed_client or not config.EMBED_TOPIC_SEEDS or not self._embedding_model:
+            return {}
+
+        seed_lookup: Dict[str, str] = {}
+        for seed in config.EMBED_TOPIC_SEEDS:
+            text = seed.strip()
+            if not text:
+                continue
+            normalized = text.lower()
+            if normalized not in seed_lookup:
+                seed_lookup[normalized] = text
+
+        if not seed_lookup:
             return {}
 
         vectors: Dict[str, List[float]] = {}
-        for seed in config.EMBED_TOPIC_SEEDS:
+        stored = TopicEmbedding.select().where(TopicEmbedding.topic.in_(list(seed_lookup.keys())))
+        for row in stored:
+            if row.embedding_model != self._embedding_model or not row.embedding:
+                continue
+            try:
+                embedding = json.loads(row.embedding)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(embedding, list):
+                vectors[row.topic] = embedding
+
+        for seed_key, seed_text in seed_lookup.items():
+            if seed_key in vectors:
+                continue
             self._rate_limit()
-            embedding = self._embed_client.embed(seed)
-            if embedding:
-                vectors[seed.lower()] = embedding
+            embedding = self._embed_client.embed(seed_text)
+            if not embedding:
+                continue
+            vectors[seed_key] = embedding
+            embedding_json = json.dumps(embedding)
+            TopicEmbedding.insert(
+                topic=seed_key,
+                embedding=embedding_json,
+                embedding_model=self._embedding_model,
+                updated_at=datetime.utcnow(),
+            ).on_conflict(
+                conflict_target=[TopicEmbedding.topic],
+                update={
+                    TopicEmbedding.embedding: embedding_json,
+                    TopicEmbedding.embedding_model: self._embedding_model,
+                    TopicEmbedding.updated_at: datetime.utcnow(),
+                },
+            ).execute()
         return vectors
 
     def _derive_topics(self, embedding: List[float]) -> Optional[List[str]]:
