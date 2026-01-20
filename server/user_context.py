@@ -257,6 +257,10 @@ def _refresh_likes(viewer_did: str, auth_token: str, pds_url: str) -> None:
         })
 
     with db.atomic():
+        Like.delete().where(Like.author == viewer_did).execute()
+        UserAction.delete().where(
+            (UserAction.user == viewer_did) & (UserAction.action == 'like')
+        ).execute()
         if like_rows:
             Like.insert_many(like_rows).on_conflict_ignore().execute()
         if action_rows:

@@ -4,7 +4,7 @@ import queue
 import random
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -232,6 +232,7 @@ class LLMEnricher:
         self._embedding_model = ''
         if self._embed_client:
             self._embedding_model = getattr(self._embed_client, 'embedding_model', '')
+        self._topic_vectors = self._build_topic_vectors()
         self._min_interval = 0.0
         if config.LLM_MAX_CALLS_PER_MINUTE > 0:
             self._min_interval = 60.0 / config.LLM_MAX_CALLS_PER_MINUTE
@@ -342,8 +343,12 @@ class LLMEnricher:
         safety = None
         if classification:
             language = _safe_str(classification.get('language'))
-            topics = _safe_json_list(classification.get('topics'))
             safety = _safe_str(classification.get('safety'))
+
+        if embedding:
+            topics = self._derive_topics(embedding)
+        if not topics and classification:
+            topics = _safe_json_list(classification.get('topics'))
 
         embedding_json = None
         embedding_model = None
@@ -396,7 +401,9 @@ class LLMEnricher:
         if not config.LLM_ENABLED:
             return None
 
-        provider = provider.lower()
+        provider = provider.lower().strip()
+        if provider in {'', 'none', 'off', 'disabled'}:
+            return None
         if role not in {'classify', 'embed'}:
             logger.warning(f'Unknown LLM role: {role}')
             return None
@@ -461,6 +468,34 @@ class LLMEnricher:
 
         logger.warning(f'Unknown LLM provider: {provider}')
         return None
+
+    def _build_topic_vectors(self) -> Dict[str, List[float]]:
+        if not self._embed_client or not config.EMBED_TOPIC_SEEDS:
+            return {}
+
+        vectors: Dict[str, List[float]] = {}
+        for seed in config.EMBED_TOPIC_SEEDS:
+            self._rate_limit()
+            embedding = self._embed_client.embed(seed)
+            if embedding:
+                vectors[seed.lower()] = embedding
+        return vectors
+
+    def _derive_topics(self, embedding: List[float]) -> Optional[List[str]]:
+        if not self._topic_vectors:
+            return None
+        scored: List[Tuple[str, float]] = []
+        for topic, vector in self._topic_vectors.items():
+            score = _cosine_similarity(embedding, vector)
+            scored.append((topic, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        topics = [
+            topic
+            for topic, score in scored
+            if score >= config.TOPIC_MIN_SCORE
+        ][: config.TOPIC_MAX_COUNT]
+        return topics or None
 
     def _trim_text(self, text: str) -> str:
         text = text.strip()
@@ -540,6 +575,15 @@ def _normalize_model_name(value: Optional[str]) -> str:
     if cleaned.lower() in {'none', 'null', 'false', 'off', 'disabled'}:
         return ''
     return cleaned
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 llm_enricher = LLMEnricher()

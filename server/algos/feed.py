@@ -5,7 +5,7 @@ from math import exp, log1p, sqrt
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from peewee import fn
+from peewee import JOIN, fn
 
 from server import config
 from server.database import (
@@ -45,12 +45,14 @@ class Candidate:
     repost_count: int
     reply_count: int
     in_network: bool
-    social_proof: int
+    follow_like_count: int
+    follow_repost_count: int
     author_affinity: float
     topics: List[str]
     language: Optional[str]
     safety: Optional[str]
     embedding: Optional[List[float]]
+    embedding_similarity: float
     topic_boost: float = 0.0
     embedding_boost: float = 0.0
     safety_penalty: float = 0.0
@@ -71,9 +73,9 @@ def handler(
     topic_preferences = viewer_context.topic_preferences if viewer_context else {}
     seen_posts = _load_recently_served(viewer_did, now)
     author_affinity = _load_author_affinity(viewer_did, now)
-    social_proof = _load_social_proof(following, now)
+    follow_like_counts, follow_repost_counts = _load_follow_social_counts(following, now)
 
-    candidates = _load_candidates(following, now)
+    candidates = _load_candidates(following, now, follow_like_counts, follow_repost_counts)
     candidates = _filter_candidates(
         candidates,
         viewer_did,
@@ -85,20 +87,21 @@ def handler(
         return {'cursor': CURSOR_EOF, 'feed': []}
 
     metadata_by_uri = _load_post_metadata(candidates) if config.LLM_ENABLED else {}
-    topic_profile, user_embedding = (
+    topic_profile, user_embeddings = (
         _load_user_llm_profile(viewer_did, now, topic_preferences)
         if config.LLM_ENABLED
-        else ({}, None)
+        else ({}, [])
     )
 
     scored = _score_candidates(
         candidates,
         following,
         author_affinity,
-        social_proof,
+        follow_like_counts,
+        follow_repost_counts,
         metadata_by_uri,
         topic_profile,
-        user_embedding,
+        user_embeddings,
         now,
     )
     scored = _apply_author_diversity(scored)
@@ -177,30 +180,34 @@ def _load_author_affinity(viewer_did: str, now: datetime) -> Dict[str, float]:
     return affinity
 
 
-def _load_social_proof(following: Set[str], now: datetime) -> Dict[str, int]:
+def _load_follow_social_counts(
+    following: Set[str],
+    now: datetime,
+) -> Tuple[Dict[str, int], Dict[str, int]]:
     if not following:
-        return {}
+        return {}, {}
 
-    cutoff = now - timedelta(hours=config.SOCIAL_PROOF_MAX_AGE_HOURS)
-    counts: Dict[str, int] = {}
+    cutoff = now - timedelta(hours=config.FOLLOW_NETWORK_WINDOW_HOURS)
+    like_counts: Dict[str, int] = {}
+    repost_counts: Dict[str, int] = {}
 
     likes = (
-        Like.select(Like.subject_uri, fn.COUNT(Like.uri).alias('count'))
+        Like.select(Like.subject_uri, fn.COUNT(fn.DISTINCT(Like.author)).alias('count'))
         .where((Like.author.in_(following)) & (Like.created_at >= cutoff))
         .group_by(Like.subject_uri)
     )
     for row in likes:
-        counts[row.subject_uri] = counts.get(row.subject_uri, 0) + int(row.count)
+        like_counts[row.subject_uri] = int(row.count)
 
     reposts = (
-        Repost.select(Repost.subject_uri, fn.COUNT(Repost.uri).alias('count'))
+        Repost.select(Repost.subject_uri, fn.COUNT(fn.DISTINCT(Repost.author)).alias('count'))
         .where((Repost.author.in_(following)) & (Repost.created_at >= cutoff))
         .group_by(Repost.subject_uri)
     )
     for row in reposts:
-        counts[row.subject_uri] = counts.get(row.subject_uri, 0) + int(row.count) * 2
+        repost_counts[row.subject_uri] = int(row.count)
 
-    return counts
+    return like_counts, repost_counts
 
 
 def _load_post_metadata(candidates: List[Post]) -> Dict[str, PostMetadata]:
@@ -215,7 +222,7 @@ def _load_user_llm_profile(
     viewer_did: str,
     now: datetime,
     topic_preferences: Dict[str, float],
-) -> Tuple[Dict[str, float], Optional[List[float]]]:
+) -> Tuple[Dict[str, float], List[List[float]]]:
     cutoff = now - timedelta(hours=config.USER_ACTION_LOOKBACK_HOURS)
     actions = (
         UserAction.select(UserAction.action, UserAction.subject_uri)
@@ -223,6 +230,7 @@ def _load_user_llm_profile(
             (UserAction.user == viewer_did)
             & (UserAction.created_at >= cutoff)
             & UserAction.subject_uri.is_null(False)
+            & UserAction.action.in_(['like', 'repost'])
         )
         .order_by(UserAction.created_at.desc())
         .limit(config.USER_ACTION_HISTORY_LIMIT)
@@ -237,7 +245,7 @@ def _load_user_llm_profile(
             weighted_uris.append((action.subject_uri, weight))
 
     if not weighted_uris:
-        return {}, None
+        return {}, []
 
     unique_uris = {uri for uri, _ in weighted_uris}
     metadata_rows = (
@@ -247,8 +255,7 @@ def _load_user_llm_profile(
     metadata_map = {row.uri: row for row in metadata_rows}
 
     topic_profile: Dict[str, float] = {}
-    embedding_sum: Optional[List[float]] = None
-    total_weight = 0.0
+    embeddings: List[List[float]] = []
 
     for uri, weight in weighted_uris:
         metadata = metadata_map.get(uri)
@@ -261,26 +268,23 @@ def _load_user_llm_profile(
 
         embedding = _parse_embedding(metadata.embedding)
         if embedding:
-            if embedding_sum is None:
-                embedding_sum = [0.0 for _ in embedding]
-            if len(embedding_sum) != len(embedding):
-                continue
-            for idx, value in enumerate(embedding):
-                embedding_sum[idx] += value * weight
-            total_weight += weight
-
-    user_embedding = None
-    if embedding_sum and total_weight > 0:
-        user_embedding = [value / total_weight for value in embedding_sum]
+            embeddings.append(embedding)
+        if len(embeddings) >= config.EMBEDDING_PROFILE_SIZE:
+            break
 
     if topic_preferences:
         for topic, weight in topic_preferences.items():
             topic_profile[topic] = topic_profile.get(topic, 0.0) + (weight * config.TOPIC_PREF_BOOST)
 
-    return topic_profile, user_embedding
+    return topic_profile, embeddings
 
 
-def _load_candidates(following: Set[str], now: datetime) -> List[Post]:
+def _load_candidates(
+    following: Set[str],
+    now: datetime,
+    follow_like_counts: Dict[str, int],
+    follow_repost_counts: Dict[str, int],
+) -> List[Post]:
     candidates: List[Post] = []
 
     in_network_cutoff = now - timedelta(hours=config.IN_NETWORK_MAX_AGE_HOURS)
@@ -296,52 +300,54 @@ def _load_candidates(following: Set[str], now: datetime) -> List[Post]:
         )
         candidates.extend(list(in_network))
 
-    oon_cutoff = now - timedelta(hours=config.OON_MAX_AGE_HOURS)
-    oon_query = Post.select().where(Post.indexed_at >= oon_cutoff)
-    if following:
-        oon_query = oon_query.where(Post.author.not_in(following))
-    oon_posts = (
-        oon_query
-        .order_by(
-            Post.like_count.desc(),
-            Post.repost_count.desc(),
-            Post.reply_count.desc(),
-            Post.indexed_at.desc(),
-        )
-        .limit(config.OON_CANDIDATE_LIMIT)
-    )
-    candidates.extend(list(oon_posts))
+    network_uris = {
+        uri
+        for uri, count in follow_like_counts.items()
+        if count >= config.FOLLOW_NETWORK_MIN_LIKES
+    }
+    network_uris.update({
+        uri
+        for uri, count in follow_repost_counts.items()
+        if count >= config.FOLLOW_NETWORK_MIN_REPOSTS
+    })
 
-    if following:
-        proof_cutoff = now - timedelta(hours=config.SOCIAL_PROOF_MAX_AGE_HOURS)
-        like_uris = (
-            Like.select(Like.subject_uri)
-            .where((Like.author.in_(following)) & (Like.created_at >= proof_cutoff))
-            .distinct()
-            .limit(config.SOCIAL_PROOF_CANDIDATE_LIMIT)
+    if network_uris:
+        network_posts = (
+            Post.select()
+            .where(Post.uri.in_(network_uris))
+            .order_by(Post.indexed_at.desc())
+            .limit(config.FOLLOW_NETWORK_CANDIDATE_LIMIT)
         )
-        repost_uris = (
-            Repost.select(Repost.subject_uri)
-            .where((Repost.author.in_(following)) & (Repost.created_at >= proof_cutoff))
-            .distinct()
-            .limit(config.SOCIAL_PROOF_CANDIDATE_LIMIT)
-        )
-        proof_uris = {row.subject_uri for row in like_uris}
-        proof_uris.update({row.subject_uri for row in repost_uris})
-        if proof_uris:
-            proof_posts = (
-                Post.select()
-                .where(Post.uri.in_(proof_uris))
-                .order_by(Post.indexed_at.desc())
-                .limit(config.SOCIAL_PROOF_CANDIDATE_LIMIT)
-            )
-            candidates.extend(list(proof_posts))
+        candidates.extend(list(network_posts))
+
+    similarity_posts = _load_similarity_candidates(now)
+    candidates.extend(similarity_posts)
 
     if len(candidates) > config.MAX_CANDIDATES:
         candidates.sort(key=lambda post: post.indexed_at, reverse=True)
         candidates = candidates[: config.MAX_CANDIDATES]
 
     return candidates
+
+
+def _load_similarity_candidates(now: datetime) -> List[Post]:
+    cutoff = now - timedelta(hours=config.SIMILARITY_MAX_AGE_HOURS)
+    query = (
+        Post.select()
+        .join(PostMetadata, JOIN.LEFT_OUTER, on=(PostMetadata.uri == Post.uri))
+        .where(
+            (Post.indexed_at >= cutoff)
+            & PostMetadata.embedding.is_null(False)
+        )
+        .order_by(
+            Post.like_count.desc(),
+            Post.repost_count.desc(),
+            Post.reply_count.desc(),
+            Post.indexed_at.desc(),
+        )
+        .limit(config.SIMILARITY_CANDIDATE_LIMIT)
+    )
+    return list(query)
 
 
 def _filter_candidates(
@@ -423,15 +429,42 @@ def _topic_boost(topics: List[str], profile: Dict[str, float]) -> float:
     return -log1p(abs(score)) * config.LLM_TOPIC_BOOST
 
 
-def _embedding_boost(embedding: Optional[List[float]], user_embedding: Optional[List[float]]) -> float:
-    if not embedding or not user_embedding:
+def _embedding_similarity(embedding: Optional[List[float]], user_embeddings: List[List[float]]) -> float:
+    if not embedding or not user_embeddings:
         return 0.0
-    if len(embedding) != len(user_embedding):
-        return 0.0
-    similarity = _cosine_similarity(embedding, user_embedding)
+    best = 0.0
+    for profile_embedding in user_embeddings:
+        if len(profile_embedding) != len(embedding):
+            continue
+        similarity = _cosine_similarity(embedding, profile_embedding)
+        if similarity > best:
+            best = similarity
+    return best
+
+
+def _embedding_boost(similarity: float) -> float:
     if similarity <= 0:
         return 0.0
     return similarity * config.LLM_EMBEDDING_BOOST
+
+
+def _passes_network_or_similarity(
+    in_network: bool,
+    follow_like_count: int,
+    follow_repost_count: int,
+    similarity: float,
+) -> bool:
+    if in_network:
+        return True
+    if follow_like_count >= config.FOLLOW_NETWORK_MIN_LIKES:
+        return True
+    if follow_repost_count >= config.FOLLOW_NETWORK_MIN_REPOSTS:
+        return True
+    return similarity >= config.EMBEDDING_SIMILARITY_MIN
+
+
+def _contains_blocked_topic(topics: List[str]) -> bool:
+    return any(topic in config.TOPIC_BLOCKLIST for topic in topics)
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -456,10 +489,11 @@ def _score_candidates(
     candidates: List[Post],
     following: Set[str],
     author_affinity: Dict[str, float],
-    social_proof: Dict[str, int],
+    follow_like_counts: Dict[str, int],
+    follow_repost_counts: Dict[str, int],
     metadata_by_uri: Dict[str, PostMetadata],
     topic_profile: Dict[str, float],
-    user_embedding: Optional[List[float]],
+    user_embeddings: List[List[float]],
     now: datetime,
 ) -> List[Candidate]:
     scored: List[Candidate] = []
@@ -471,11 +505,26 @@ def _score_candidates(
         safety = metadata.safety if metadata else None
         embedding = _parse_embedding(metadata.embedding) if metadata else None
 
+        if topics and _contains_blocked_topic(topics):
+            continue
+
         if safety and safety.lower() in config.LLM_SAFETY_BLOCKLIST:
             continue
 
+        follow_like_count = follow_like_counts.get(post.uri, 0)
+        follow_repost_count = follow_repost_counts.get(post.uri, 0)
+        embedding_similarity = _embedding_similarity(embedding, user_embeddings)
+
+        if not _passes_network_or_similarity(
+            post.author in following,
+            follow_like_count,
+            follow_repost_count,
+            embedding_similarity,
+        ):
+            continue
+
         topic_boost = _topic_boost(topics, topic_profile)
-        embedding_boost = _embedding_boost(embedding, user_embedding)
+        embedding_boost = _embedding_boost(embedding_similarity)
         safety_penalty = _safety_penalty(safety)
         candidate = Candidate(
             uri=post.uri,
@@ -490,12 +539,14 @@ def _score_candidates(
             repost_count=post.repost_count,
             reply_count=post.reply_count,
             in_network=post.author in following,
-            social_proof=social_proof.get(post.uri, 0),
+            follow_like_count=follow_like_count,
+            follow_repost_count=follow_repost_count,
             author_affinity=author_affinity.get(post.author, 0.0),
             topics=topics,
             language=language,
             safety=safety,
             embedding=embedding,
+            embedding_similarity=embedding_similarity,
             topic_boost=topic_boost,
             embedding_boost=embedding_boost,
             safety_penalty=safety_penalty,
@@ -517,7 +568,10 @@ def _score_candidate(candidate: Candidate, now: datetime) -> float:
         + log1p(candidate.reply_count) * config.WEIGHT_REPLY
     )
     affinity = log1p(candidate.author_affinity) * config.WEIGHT_AUTHOR_AFFINITY
-    social = log1p(candidate.social_proof) * config.WEIGHT_SOCIAL_PROOF
+    follow_social = (
+        log1p(candidate.follow_like_count) * config.FOLLOW_NETWORK_LIKE_WEIGHT
+        + log1p(candidate.follow_repost_count) * config.FOLLOW_NETWORK_REPOST_WEIGHT
+    )
 
     base = config.WEIGHT_IN_NETWORK if candidate.in_network else config.WEIGHT_OON
     media = config.WEIGHT_MEDIA if candidate.has_media else 0.0
@@ -526,7 +580,7 @@ def _score_candidate(candidate: Candidate, now: datetime) -> float:
     return (
         engagement
         + affinity
-        + social
+        + follow_social
         + base
         + media
         + (recency * config.WEIGHT_RECENCY)

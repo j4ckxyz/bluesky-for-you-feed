@@ -168,7 +168,9 @@ impactful settings:
 - `WEIGHT_RECENCY`
 - `WEIGHT_LIKE`, `WEIGHT_REPOST`, `WEIGHT_REPLY`
 - `AUTHOR_DIVERSITY_DECAY`
-- `IN_NETWORK_CANDIDATE_LIMIT`, `OON_CANDIDATE_LIMIT`
+- `IN_NETWORK_CANDIDATE_LIMIT`, `SIMILARITY_CANDIDATE_LIMIT`
+- `FOLLOW_NETWORK_MIN_LIKES`, `FOLLOW_NETWORK_MIN_REPOSTS`
+- `EMBEDDING_SIMILARITY_MIN`
 
 ## Follow + like caching
 
@@ -198,15 +200,33 @@ TOPIC_PREF_MAX=4.0
 TOPIC_PREF_BOOST=1.0
 ```
 
+## Embeddings without classifiers
+
+If you want embeddings only (no LLM classification), set:
+
+```text
+LLM_CLASSIFY_PROVIDER=none
+LLM_EMBED_PROVIDER=openrouter
+```
+
+In this mode, topics are derived from embedding similarity to the
+`EMBED_TOPIC_SEEDS` list instead of LLM-generated labels.
+
+To exclude politics (or other topics), set:
+
+```text
+TOPIC_BLOCKLIST=politics
+```
+
 ## Algorithm deep dive
 
 ### Candidate sources
 
 - **In-network**: posts from followed accounts within `IN_NETWORK_MAX_AGE_HOURS`.
-- **Out-of-network**: high-engagement posts from non-followed accounts within
-  `OON_MAX_AGE_HOURS`.
-- **Social proof**: posts liked/reposted by follows within
-  `SOCIAL_PROOF_MAX_AGE_HOURS`.
+- **Mini-network**: posts liked or reposted by multiple people you follow within
+  `FOLLOW_NETWORK_WINDOW_HOURS`.
+- **Similarity fallback**: recent posts with embeddings that closely match your
+  recent likes.
 
 ### Filters
 
@@ -217,16 +237,18 @@ TOPIC_PREF_BOOST=1.0
 
 ### Scoring
 
-Scores combine engagement, social proof, author affinity, and recency:
+Scores combine engagement, follow-network activity, author affinity, recency,
+and embedding similarity:
 
 ```text
 score = engagement
       + author_affinity
-      + social_proof
+      + follow_network_activity
       + base_in_network_or_oon
       + media_bonus
       + recency_bonus
       + reply_penalty
+      + embedding_similarity
 ```
 
 Engagement and social proof are log-scaled, recency uses an exponential decay

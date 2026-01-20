@@ -202,3 +202,36 @@ TOPIC_PREF_LESS_DELTA = _get_float_env_var(os.environ.get('TOPIC_PREF_LESS_DELTA
 TOPIC_PREF_MIN = _get_float_env_var(os.environ.get('TOPIC_PREF_MIN'), -4.0)
 TOPIC_PREF_MAX = _get_float_env_var(os.environ.get('TOPIC_PREF_MAX'), 4.0)
 TOPIC_PREF_BOOST = _get_float_env_var(os.environ.get('TOPIC_PREF_BOOST'), 1.0)
+
+EMBED_TOPIC_SEEDS = [
+    topic.strip()
+    for topic in (
+        os.environ.get(
+            'EMBED_TOPIC_SEEDS',
+            'art,photography,music,gaming,science,technology,sports,books,film,food,travel,nature,politics'
+        )
+    ).split(',')
+    if topic.strip()
+]
+TOPIC_MIN_SCORE = _get_float_env_var(os.environ.get('TOPIC_MIN_SCORE'), 0.22)
+TOPIC_MAX_COUNT = _get_int_env_var(os.environ.get('TOPIC_MAX_COUNT'), 4)
+TOPIC_BLOCKLIST = {
+    topic.strip().lower()
+    for topic in (os.environ.get('TOPIC_BLOCKLIST') or 'politics').split(',')
+    if topic.strip()
+}
+
+FOLLOW_NETWORK_WINDOW_HOURS = _get_int_env_var(os.environ.get('FOLLOW_NETWORK_WINDOW_HOURS'), 72)
+FOLLOW_NETWORK_MIN_LIKES = _get_int_env_var(os.environ.get('FOLLOW_NETWORK_MIN_LIKES'), 2)
+FOLLOW_NETWORK_MIN_REPOSTS = _get_int_env_var(os.environ.get('FOLLOW_NETWORK_MIN_REPOSTS'), 1)
+FOLLOW_NETWORK_CANDIDATE_LIMIT = _get_int_env_var(
+    os.environ.get('FOLLOW_NETWORK_CANDIDATE_LIMIT'),
+    800,
+)
+FOLLOW_NETWORK_LIKE_WEIGHT = _get_float_env_var(os.environ.get('FOLLOW_NETWORK_LIKE_WEIGHT'), 2.0)
+FOLLOW_NETWORK_REPOST_WEIGHT = _get_float_env_var(os.environ.get('FOLLOW_NETWORK_REPOST_WEIGHT'), 2.4)
+
+SIMILARITY_MAX_AGE_HOURS = _get_int_env_var(os.environ.get('SIMILARITY_MAX_AGE_HOURS'), 48)
+SIMILARITY_CANDIDATE_LIMIT = _get_int_env_var(os.environ.get('SIMILARITY_CANDIDATE_LIMIT'), 600)
+EMBEDDING_SIMILARITY_MIN = _get_float_env_var(os.environ.get('EMBEDDING_SIMILARITY_MIN'), 0.18)
+EMBEDDING_PROFILE_SIZE = _get_int_env_var(os.environ.get('EMBEDDING_PROFILE_SIZE'), 20)
