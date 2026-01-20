@@ -232,11 +232,11 @@ class LLMEnricher:
         self._embedding_model = ''
         if self._embed_client:
             self._embedding_model = getattr(self._embed_client, 'embedding_model', '')
-        self._topic_vectors = self._build_topic_vectors()
         self._min_interval = 0.0
         if config.LLM_MAX_CALLS_PER_MINUTE > 0:
             self._min_interval = 60.0 / config.LLM_MAX_CALLS_PER_MINUTE
         self._last_call = 0.0
+        self._topic_vectors = self._build_topic_vectors()
 
     def start(self) -> None:
         if not (self._classify_client or self._embed_client) or self._thread:
